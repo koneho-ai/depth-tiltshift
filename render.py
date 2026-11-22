@@ -40,7 +40,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageEnhance
 
-from imload import load_bgr
+from imload import load_bgr, save_pil
 
 
 # --- colour space -----------------------------------------------------------
@@ -275,13 +275,11 @@ def main():
                     aperture=args.aperture, bands=args.bands,
                     r_max=args.r_max, shape=args.shape, rim=args.rim,
                     blades=args.blades, edge_soft=args.edge_soft)
-    cv2.imwrite(args.out, out, [cv2.IMWRITE_JPEG_QUALITY, 92])
-
-    # Miniature colour lift (same as v1).
+    # Miniature colour lift (same as v1), then save (.jxl supported).
     pil = Image.fromarray(cv2.cvtColor(out, cv2.COLOR_BGR2RGB))
     pil = ImageEnhance.Color(pil).enhance(args.saturation)
     pil = ImageEnhance.Contrast(pil).enhance(args.contrast)
-    pil.save(args.out, quality=92)
+    save_pil(pil, args.out)
     print(f"saved {args.out}")
 
 

@@ -66,3 +66,38 @@ def load_bgr(path):
     if img is None:
         raise ValueError(f"cannot read {path}")
     return img
+
+
+def save_jxl(img, path, distance=1.0, effort=7):
+    """Encode a PIL RGB image as JPEG XL via ffmpeg's libjxl encoder.
+
+    `distance` is the Butteraugli target: 1.0 is visually lossless
+    (the libjxl default), 0 is mathematically lossless. Pillow cannot
+    write JXL on this platform, so the image goes through ffmpeg as PNG
+    on stdin. 8-bit sRGB in, 8-bit JXL out.
+    """
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    cmd = [
+        "ffmpeg", "-v", "error", "-i", "pipe:0",
+        "-c:v", "libjxl", "-distance", str(distance),
+        "-effort", str(effort), "-y", str(path),
+    ]
+    proc = subprocess.run(cmd, input=buf.getvalue(),
+                          stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    if proc.returncode != 0:
+        raise RuntimeError(
+            f"ffmpeg failed to encode {path}: "
+            f"{proc.stderr.decode(errors='replace').strip()}")
+
+
+def save_pil(img, path, quality=92):
+    """Save a PIL RGB image, inferring the format from the extension.
+
+    `.jxl` goes through ffmpeg/libjxl (distance 1.0, visually
+    lossless); anything else uses Pillow directly.
+    """
+    if str(path).lower().endswith((".jxl", ".jxls")):
+        save_jxl(img, path)
+    else:
+        img.save(path, quality=quality)

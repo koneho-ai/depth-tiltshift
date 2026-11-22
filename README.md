@@ -113,6 +113,9 @@ to help you pick a focus point.
 python render.py INPUT.jpg DEPTH.npy --out OUT.jpg [options]
 ```
 
+`--out` can end in `.jxl` for a JPEG XL still (visually lossless,
+roughly half the size of the JPEG at the same quality).
+
 | Option | Default | Meaning |
 |---|---|---|
 | `--focus-xy X Y` | `0.5 0.62` | Focus point as fractions of width/height (0..1). The focus depth is sampled from the depth map there. Ignored if `--focus` is given. |
@@ -192,7 +195,7 @@ python process_album.py --album-json album.json
 original is expected at `work/<stem>/<filename>` (one directory per photo,
 so renders stay with their source). Per image the batch makes a 3000px
 working copy + depth map, a still focused on the subject (hexagonal
-aperture 3), a 1920px focus sweep (180 frames at 24 fps, 7.5 s,
+aperture 3, saved as `.jxl`), a 1920px focus sweep (180 frames at 24 fps, 7.5 s,
 hexagonal aperture 6, near→far from that image's depth percentiles), and
 optionally uploads both to a NAS share (`--no-upload` skips that step;
 `--only STEM` runs a single image; `--stills-only` skips the videos).

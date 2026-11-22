@@ -185,7 +185,7 @@ def process(asset, focus, args):
     depth3000 = os.path.join(d, "depth_3000")
     img1920 = os.path.join(d, "work_1920.jpg")
     depth1920 = os.path.join(d, "depth_1920.npy")
-    still = os.path.join(d, f"{stem}_still.jpg")
+    still = os.path.join(d, f"{stem}_still.jxl")
     video = os.path.join(d, f"{stem}_sweep.mp4")
     frames_dir = os.path.join(d, "sweep_frames")
 
