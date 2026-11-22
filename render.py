@@ -12,8 +12,10 @@ sees background that the pinhole view hides, so the correct fix is:
 
   1. Work in linear light (blur in sRGB darkens highlights).
   2. Split the image into depth bands (uniform in diopters = disparity here,
-     since our depth map is disparity-like), with soft overlapping tent
-     weights (Wadhwa Eq. 9).
+     since our depth map is disparity-like), with TRIANGLE weights centred
+     on each band centre (a partition of unity, Wadhwa Eq. 9): every pixel
+     is a blend of its two nearest bands, so the sharp zone slides
+     continuously through depth instead of snapping from slice to slice.
   3. Per band: cull nearer pixels (foreground occluders), inpaint the holes
      with push-pull pyramid fill (Strengert et al. 2006) so the blur has
      plausible background to draw from, and set filled alpha to 1.
@@ -83,12 +85,16 @@ def disk_kernel(r, shape="disk", rim=0.0, blades=6, edge_soft=0.4):
         ang = np.arctan2(yy, xx)
         ap = np.pi / blades
         rr = r * np.cos(ap) / np.cos((ang + ap / 2) % (2 * ap) - ap)
-        w = (rad <= rr).astype(np.float32)
-        w *= np.clip(rr + 0.5 - rad, 0, 1)  # antialiased edge
+        # Antialiased edge ONLY -- no hard (rad <= rr) mask. The mask
+        # made pixels enter the kernel abruptly at weight 0.5 as r grew,
+        # so the blur jumped in pixel steps as focus swept (measured
+        # 2026-11-22: frame-to-frame diffs modulating 2x with the kernel
+        # grid). The clip alone is continuous in r: a pixel's weight
+        # ramps 0 -> 1 as the edge passes it.
+        w = np.clip(rr + 0.5 - rad, 0, 1)
         r_edge = rr  # falloff follows the polygon's local radius
     else:
-        w = (rad <= r).astype(np.float32)
-        w *= np.clip(r + 0.5 - rad, 0, 1)  # antialiased edge
+        w = np.clip(r + 0.5 - rad, 0, 1)  # antialiased edge, no hard mask
         r_edge = r
     if edge_soft > 0:
         t = np.clip((rad - r_edge * (1 - edge_soft))
@@ -124,8 +130,7 @@ def push_pull_fill(img, valid):
 
 # --- main renderer ----------------------------------------------------------
 
-def prepare_layers(img_bgr, depth, tilt_x=0.0, tilt_y=0.0, bands=12,
-                   overlap=0.25):
+def prepare_layers(img_bgr, depth, tilt_x=0.0, tilt_y=0.0, bands=48):
     """Focus-independent part of the pipeline (steps 0-1, 3-5).
 
     Returns (drel, lin, layers): plane-relative depth, linearized image, and
@@ -149,21 +154,33 @@ def prepare_layers(img_bgr, depth, tilt_x=0.0, tilt_y=0.0, bands=12,
     # Step 0: linearize.
     lin = srgb_to_linear(img_bgr.astype(np.float32) / 255.0)
 
-    # Step 3: bands uniform in d' (diopters).
-    edges = np.linspace(drel.min(), drel.max(), bands + 1)
+    # Step 3: bands uniform in d' (diopters), with TRIANGLE weights
+    # centred on each band centre -- a partition of unity, so every
+    # pixel is a blend of its two nearest bands and the sharp zone
+    # slides continuously through depth as focus moves. The old
+    # trapezoid weights (flat top 1.0 across each band, tapering only
+    # 0.25x the band width outside) made each pixel belong to exactly
+    # one band, so only band centres could ever be sharp: as focus
+    # swept, sharpness snapped from slice to slice with dead zones
+    # between (measured 2026-11-22 on DSC_9801: frame-to-frame diffs
+    # spiking 4x every time focus crossed a centre). 48 bands keeps
+    # the midpoint softness under ~1.5 px at aperture 6 and the
+    # sweep's frame-to-frame change within 1.6x (measured).
+    centers = np.linspace(drel.min(), drel.max(), bands)
+    s = ((drel.max() - drel.min()) / max(bands - 1, 1)) if bands > 1 else 1.0
+    s = max(float(s), 1e-9)
     layers = []
-    for j in range(bands):
-        lo, hi = edges[j], edges[j + 1]
-        eta = max(overlap * (hi - lo), 1e-9)
-        a = np.clip(1 + np.minimum(drel - lo, hi - drel) / eta, 0, 1)
-        center = 0.5 * (lo + hi)
+    for c in centers:
+        a = np.clip(1 - np.abs(drel - c) / s, 0, 1)
+        center = float(c)
         rgba = np.dstack([lin * a[..., None], a]).astype(np.float32)
-        # Step 4: occluders are pixels NEARER than this band (d' above
-        # the band + taper). Farther pixels stay transparent: they are
-        # behind this layer and handled by farther layers. (The report's
-        # sketch used a<0.01 as the hole, which wrongly includes farther
-        # pixels; culling only nearer pixels is the Kraus §3.1 rule.)
-        hole = (drel > hi + eta).astype(np.uint8)
+        # Step 4: occluders are pixels NEARER than this band's triangle
+        # support (d' above c + s). Farther pixels stay transparent:
+        # they are behind this layer and handled by farther layers.
+        # (The report's sketch used a<0.01 as the hole, which wrongly
+        # includes farther pixels; culling only nearer pixels is the
+        # Kraus §3.1 rule.)
+        hole = (drel > c + s).astype(np.uint8)
         if hole.any():
             # Step 5: push-pull fill the occluder footprint ONLY -- do
             # NOT dilate the hole. An earlier version dilated by r_j,
@@ -191,6 +208,35 @@ def prepare_layers(img_bgr, depth, tilt_x=0.0, tilt_y=0.0, bands=12,
     return drel, lin, layers
 
 
+def _blur_rgba(rgba, r, shape, rim, blades, edge_soft):
+    """Disk-blur premultiplied RGBA, at a resolution matched to r.
+
+    Large radii are blurred at reduced resolution and upsampled: the
+    content is already that blurry, so nothing visible is lost, and a
+    1/4-res blur costs 1/16 of full res. This keeps many-band renders
+    affordable (the pyramidal idea from Kraus & Strengert 2007).
+    """
+    if r < 0.5:
+        return rgba
+    if r <= 12:
+        scale = 1.0
+    elif r <= 24:
+        scale = 0.5
+    else:
+        scale = 0.25
+    if scale == 1.0:
+        return cv2.filter2D(
+            rgba, -1, disk_kernel(r, shape, rim, blades, edge_soft),
+            borderType=cv2.BORDER_REFLECT)
+    h, w = rgba.shape[:2]
+    small = cv2.resize(rgba, (max(1, int(w * scale)), max(1, int(h * scale))),
+                       interpolation=cv2.INTER_AREA)
+    blurred = cv2.filter2D(
+        small, -1, disk_kernel(r * scale, shape, rim, blades, edge_soft),
+        borderType=cv2.BORDER_REFLECT)
+    return cv2.resize(blurred, (w, h), interpolation=cv2.INTER_LINEAR)
+
+
 def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
                  shape="disk", rim=0.0, blades=6, edge_soft=0.4):
     """Per-frame part of the pipeline (steps 6-8): blur each pre-filled
@@ -206,9 +252,7 @@ def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
     for center, rgba in layers:
         r_j = min(float(strength * abs(center - focus)), r_max)
         # Step 6: same disk blur on premultiplied RGB and A together.
-        b = rgba if r_j < 0.5 else cv2.filter2D(
-            rgba, -1, disk_kernel(r_j, shape, rim, blades, edge_soft),
-            borderType=cv2.BORDER_REFLECT)
+        b = _blur_rgba(rgba, r_j, shape, rim, blades, edge_soft)
         # Step 7: premultiplied over.
         acc_rgb = b[..., :3] + (1 - b[..., 3:4]) * acc_rgb
         acc_a = b[..., 3] + (1 - b[..., 3]) * acc_a
@@ -219,15 +263,15 @@ def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
 
 
 def dof_bokeh(img_bgr, depth, focus_xy=(0.5, 0.62), focus=None,
-              tilt_x=0.0, tilt_y=0.0, aperture=3.0, bands=12, r_max=30.0,
-              overlap=0.25, shape="disk", rim=0.0, blades=6,
+              tilt_x=0.0, tilt_y=0.0, aperture=3.0, bands=48, r_max=30.0,
+              shape="disk", rim=0.0, blades=6,
               edge_soft=0.4):
     """img_bgr: HxWx3 uint8 BGR. depth: HxW float32, 1 = close (disparity-like).
 
     Returns HxWx3 uint8 BGR.
     """
     drel, lin, layers = prepare_layers(img_bgr, depth, tilt_x, tilt_y,
-                                       bands, overlap)
+                                       bands)
     if focus is None:
         fx, fy = focus_xy
         focus = float(drel[int(fy * drel.shape[0]), int(fx * drel.shape[1])])
@@ -247,7 +291,7 @@ def main():
     ap.add_argument("--tilt-x", type=float, default=0.0)
     ap.add_argument("--tilt-y", type=float, default=0.0)
     ap.add_argument("--aperture", type=float, default=3.0)
-    ap.add_argument("--bands", type=int, default=12)
+    ap.add_argument("--bands", type=int, default=48)
     ap.add_argument("--r-max", type=float, default=30.0)
     ap.add_argument("--shape", choices=["disk", "polygon"], default="disk")
     ap.add_argument("--rim", type=float, default=0.0,

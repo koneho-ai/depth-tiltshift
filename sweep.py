@@ -38,7 +38,7 @@ def main():
     ap.add_argument("--focus-near", type=float, default=0.70)
     ap.add_argument("--focus-far", type=float, default=0.03)
     ap.add_argument("--aperture", type=float, default=3.0)
-    ap.add_argument("--bands", type=int, default=12)
+    ap.add_argument("--bands", type=int, default=48)
     ap.add_argument("--r-max", type=float, default=30.0)
     ap.add_argument("--shape", choices=["disk", "polygon"], default="polygon")
     ap.add_argument("--blades", type=int, default=6)
@@ -61,7 +61,7 @@ def main():
 
     t0 = time.time()
     drel, lin, layers = prepare_layers(img, depth, 0.0, 0.0,
-                                       args.bands, 0.25)
+                                       args.bands)
     print(f"layers prepared in {time.time() - t0:.1f}s "
           f"(depth range {drel.min():.3f}..{drel.max():.3f})", flush=True)
 

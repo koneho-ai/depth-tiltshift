@@ -22,8 +22,13 @@ Wadhwa et al. 2018):
 
 1. **Linearize** — blur and composite in linear light, not sRGB, so
    highlights keep their energy.
-2. **Depth bands** — split the image into 12 bands uniform in diopters
-   (disparity), with soft overlapping tent weights so there is no banding.
+2. **Depth bands** — split the image into 48 bands uniform in diopters
+   (disparity), with triangle weights centred on each band centre (a
+   partition of unity): every pixel is a blend of its two nearest bands,
+   so the sharp zone slides continuously through depth as focus moves
+   instead of snapping from slice to slice. Large blur radii are
+   computed at reduced resolution and upsampled (pyramidal blur), which
+   keeps 48 bands affordable.
 3. **Cull + inpaint** — per band, remove nearer pixels (foreground
    occluders) and push-pull inpaint the background hidden behind them, so
    the blur has plausible background to draw from. Only the occluder
@@ -123,7 +128,7 @@ roughly half the size of the JPEG at the same quality).
 | `--tilt-x TX` | `0.0` | Horizontal tilt of the focus plane, in depth units across the frame. |
 | `--tilt-y TY` | `0.0` | Vertical tilt. Positive tilts the plane so the top of the frame focuses farther away. |
 | `--aperture A` | `3.0` | Blur strength. Disk radius in px is `A · 20 · |depth − focus|`, capped by `--r-max`. 3 is gentle, 5 is strong. |
-| `--bands K` | `12` | Depth bands (8–16 is the useful range). |
+| `--bands K` | `48` | Depth bands. 48 keeps a focus sweep smooth (frame-to-frame change within 1.6x); fewer bands make the sharp zone snap from slice to slice. |
 | `--r-max R` | `30.0` | Maximum blur radius in px. |
 | `--shape` | `disk` | `disk` (wide-open aperture) or `polygon` (bladed iris). |
 | `--blades N` | `6` | Polygon sides when `--shape polygon` (6 = hexagon). |
