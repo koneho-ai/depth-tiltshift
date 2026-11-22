@@ -1,0 +1,10 @@
+# Tested versions (Python 3.11+, CPU). Install torch FIRST, separately:
+#   CPU:  pip install torch --index-url https://download.pytorch.org/whl/cpu
+#   GPU:  pip install torch --index-url https://download.pytorch.org/whl/cu126
+#         (or the CUDA build matching your driver; see https://pytorch.org)
+# Then:
+#   pip install -r requirements.txt
+numpy==2.5.5
+opencv-python-headless==5.1.0.95
+pillow==13.0.0
+transformers==5.24.0
