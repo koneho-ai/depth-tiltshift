@@ -41,6 +41,9 @@ def main():
     ap.add_argument("--r-max", type=float, default=30.0)
     ap.add_argument("--shape", choices=["disk", "polygon"], default="polygon")
     ap.add_argument("--blades", type=int, default=6)
+    ap.add_argument("--edge-soft", type=float, default=0.4,
+                    help="apodization: fraction of the disc radius over "
+                    "which the kernel edge falls off (0 = flat pillbox)")
     ap.add_argument("--saturation", type=float, default=1.2)
     ap.add_argument("--contrast", type=float, default=1.05)
     args = ap.parse_args()
@@ -67,7 +70,7 @@ def main():
         focus = args.focus_near + (args.focus_far - args.focus_near) * smoothstep(t)
         ft0 = time.time()
         frame = render_focus(lin, layers, focus, args.aperture, args.r_max,
-                             args.shape, 0.0, args.blades)
+                             args.shape, 0.0, args.blades, args.edge_soft)
         pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         pil = ImageEnhance.Color(pil).enhance(args.saturation)
         pil = ImageEnhance.Contrast(pil).enhance(args.contrast)

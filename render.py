@@ -17,8 +17,12 @@ sees background that the pinhole view hides, so the correct fix is:
   3. Per band: cull nearer pixels (foreground occluders), inpaint the holes
      with push-pull pyramid fill (Strengert et al. 2006) so the blur has
      plausible background to draw from, and set filled alpha to 1.
-  4. Blur each band's premultiplied RGBA with a uniform DISK kernel (the
-     aperture imaged), not a Gaussian. Optional polygon/rim for shaped bokeh.
+  4. Blur each band's premultiplied RGBA with a DISK kernel (the aperture
+     imaged), not a Gaussian. The disc is flat in the centre and falls off
+     over its outer edge (apodized, see disk_kernel): a perfectly flat disc
+     with a hard rim makes a blurred foreground object's silhouette read as
+     a visible outline against sharp background. Optional polygon/rim for
+     shaped bokeh.
   5. Composite far -> near with the premultiplied over operator.
 
 Tilt support: bands and CoC are computed in plane-relative depth
@@ -51,11 +55,24 @@ def linear_to_srgb(c):
 
 # --- kernels ----------------------------------------------------------------
 
-def disk_kernel(r, shape="disk", rim=0.0, blades=6):
+def disk_kernel(r, shape="disk", rim=0.0, blades=6, edge_soft=0.4):
     """Normalized disk (pillbox) kernel of radius r px, 1-px antialiased edge.
 
-    Optional bright rim (over-corrected spherical aberration look) or an
-    N-blade polygon aperture (apothem form).
+    The intensity profile (IDF) is flat in the centre and falls off over
+    the outer ``edge_soft`` fraction of the radius (cosine/Hann falloff,
+    zero slope at both ends) -- the soft-edged, centre-weighted disc of
+    an under-corrected lens ("creamy" bokeh, Bühler & Wexler 2002).
+    A perfectly flat disc (edge_soft=0) makes a blurred foreground
+    object's silhouette read as a visible outline against sharp
+    background: the layer alpha falls almost linearly past the edge and
+    hits zero with a kink (measured 2026-11-22 on the canyon sweep:
+    alpha 0.52 at the spire edge, 0.21 at +15 px, 0.01 at +30 px -- the
+    correct flat-disc profile, but the eye reads the kink as an edge).
+    Apodizing the edge makes the feather S-shaped with a smooth landing,
+    so the blurred object dissolves into the background with no outline.
+    edge_soft=0 recovers the flat pillbox (geometric bokeh discs, hard
+    rim). Optional bright rim (over-corrected spherical aberration look)
+    or an N-blade polygon aperture (apothem form).
     """
     k = int(np.ceil(r))
     yy, xx = np.mgrid[-k:k + 1, -k:k + 1]
@@ -65,9 +82,16 @@ def disk_kernel(r, shape="disk", rim=0.0, blades=6):
         ap = np.pi / blades
         rr = r * np.cos(ap) / np.cos((ang + ap / 2) % (2 * ap) - ap)
         w = (rad <= rr).astype(np.float32)
+        w *= np.clip(rr + 0.5 - rad, 0, 1)  # antialiased edge
+        r_edge = rr  # falloff follows the polygon's local radius
     else:
         w = (rad <= r).astype(np.float32)
         w *= np.clip(r + 0.5 - rad, 0, 1)  # antialiased edge
+        r_edge = r
+    if edge_soft > 0:
+        t = np.clip((rad - r_edge * (1 - edge_soft))
+                    / (r_edge * edge_soft + 1e-6), 0, 1)
+        w *= 0.5 * (1 + np.cos(np.pi * t))  # Hann falloff, smooth landing
     if rim:
         w *= 1.0 + rim * np.clip((rad / max(r, 1e-6) - 0.7) / 0.3, 0, 1) ** 2
     return (w / w.sum()).astype(np.float32)
@@ -166,7 +190,7 @@ def prepare_layers(img_bgr, depth, tilt_x=0.0, tilt_y=0.0, bands=12,
 
 
 def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
-                 shape="disk", rim=0.0, blades=6):
+                 shape="disk", rim=0.0, blades=6, edge_soft=0.4):
     """Per-frame part of the pipeline (steps 6-8): blur each pre-filled
     layer by its focus-dependent radius and composite far -> near.
 
@@ -181,7 +205,7 @@ def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
         r_j = min(float(strength * abs(center - focus)), r_max)
         # Step 6: same disk blur on premultiplied RGB and A together.
         b = rgba if r_j < 0.5 else cv2.filter2D(
-            rgba, -1, disk_kernel(r_j, shape, rim, blades),
+            rgba, -1, disk_kernel(r_j, shape, rim, blades, edge_soft),
             borderType=cv2.BORDER_REFLECT)
         # Step 7: premultiplied over.
         acc_rgb = b[..., :3] + (1 - b[..., 3:4]) * acc_rgb
@@ -194,7 +218,8 @@ def render_focus(lin, layers, focus, aperture=3.0, r_max=30.0,
 
 def dof_bokeh(img_bgr, depth, focus_xy=(0.5, 0.62), focus=None,
               tilt_x=0.0, tilt_y=0.0, aperture=3.0, bands=12, r_max=30.0,
-              overlap=0.25, shape="disk", rim=0.0, blades=6):
+              overlap=0.25, shape="disk", rim=0.0, blades=6,
+              edge_soft=0.4):
     """img_bgr: HxWx3 uint8 BGR. depth: HxW float32, 1 = close (disparity-like).
 
     Returns HxWx3 uint8 BGR.
@@ -207,7 +232,7 @@ def dof_bokeh(img_bgr, depth, focus_xy=(0.5, 0.62), focus=None,
     print(f"focus (plane-relative depth) {focus:.3f} at {focus_xy}, "
           f"tilt_x {tilt_x} tilt_y {tilt_y}")
     return render_focus(lin, layers, focus, aperture, r_max, shape, rim,
-                        blades)
+                        blades, edge_soft)
 
 
 def main():
@@ -226,6 +251,10 @@ def main():
     ap.add_argument("--rim", type=float, default=0.0,
                     help="bright-rim strength 0..1 (soap-bubble bokeh)")
     ap.add_argument("--blades", type=int, default=6)
+    ap.add_argument("--edge-soft", type=float, default=0.4,
+                    help="apodization: fraction of the disc radius over "
+                    "which the kernel edge falls off (0 = flat pillbox, "
+                    "hard rim; 0.4 = soft creamy edge, default)")
     ap.add_argument("--saturation", type=float, default=1.2)
     ap.add_argument("--contrast", type=float, default=1.05)
     args = ap.parse_args()
@@ -242,7 +271,7 @@ def main():
                     tilt_x=args.tilt_x, tilt_y=args.tilt_y,
                     aperture=args.aperture, bands=args.bands,
                     r_max=args.r_max, shape=args.shape, rim=args.rim,
-                    blades=args.blades)
+                    blades=args.blades, edge_soft=args.edge_soft)
     cv2.imwrite(args.out, out, [cv2.IMWRITE_JPEG_QUALITY, 92])
 
     # Miniature colour lift (same as v1).

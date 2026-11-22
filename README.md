@@ -122,6 +122,7 @@ python render.py INPUT.jpg DEPTH.npy --out OUT.jpg [options]
 | `--shape` | `disk` | `disk` (wide-open aperture) or `polygon` (bladed iris). |
 | `--blades N` | `6` | Polygon sides when `--shape polygon` (6 = hexagon). |
 | `--rim R` | `0.0` | Bright-rim strength 0..1 (soap-bubble bokeh). |
+| `--edge-soft S` | `0.4` | Apodization: fraction of the disc radius over which the kernel edge falls off. `0` is a flat pillbox (geometric bokeh discs, hard rim); `0.4` is the soft creamy edge of an under-corrected lens. A flat disc makes a blurred foreground object's silhouette read as a visible outline against sharp background. |
 | `--saturation S` | `1.2` | Colour saturation lift for the miniature look. |
 | `--contrast C` | `1.05` | Contrast lift. |
 
@@ -153,7 +154,7 @@ python sweep.py INPUT.jpg DEPTH.npy --out-dir FRAMES [options]
 | `--fps F` | `24` | Frames per second (only used for the duration message; pass the same value to ffmpeg). |
 | `--focus-near D` | `0.70` | Focus depth of the first frame (near). |
 | `--focus-far D` | `0.03` | Focus depth of the last frame (far). |
-| `--aperture`, `--bands`, `--r-max`, `--shape`, `--blades`, `--saturation`, `--contrast` | as `render.py` | Same meaning. |
+| `--aperture`, `--bands`, `--r-max`, `--shape`, `--blades`, `--edge-soft`, `--saturation`, `--contrast` | as `render.py` | Same meaning. |
 
 Focus follows a smoothstep ease, so the pull lingers at each end. Frames
 are written as `FRAMES/frame_000.png` … and existing frames are skipped,
@@ -181,6 +182,13 @@ use `-crf 18`–`20` for a smaller file.
 - **Bokeh shape needs highlights.** Disk vs hexagon only shows on small
   bright highlights (lights, sun glints, white water). On a scene with
   none, the two look almost the same.
+- **Foreground edges.** When focus is far, a near object should melt into
+  the background with no outline at all: its blurred image spreads past
+  its own silhouette as a semi-transparent veil fading smoothly to zero.
+  If the edge reads as a line, the blur radius is too small compared to
+  the object — raise `--aperture` (and `--r-max`, so the cap doesn't bind)
+  and keep `--edge-soft` at its 0.4 default. A flat disc (`--edge-soft 0`)
+  makes the veil's outer boundary visible as a kink.
 - **LDR limits.** Blurring a clipped (JPEG) highlight spreads its energy
   over the disc, so bokeh discs look dimmer than on a real camera. HDR
   input would fix this; it is not implemented.
