@@ -42,7 +42,10 @@ occlusion. With tilt set to zero you get pure depth-of-field blur.
 ## Requirements
 
 - Python 3.11+
-- `ffmpeg` on your `PATH` (only needed for the focus-sweep video)
+- `ffmpeg` on your `PATH` — needed for the focus-sweep video, and for
+  JPEG XL (`.jxl`) input, which is decoded through ffmpeg's libjxl
+  decoder (included in most ffmpeg builds since 6.0; check with
+  `ffmpeg -decoders | grep libjxl`)
 - About 2 GB RAM for a 1–3 MP image; CPU-only is fine
 
 ## Install
@@ -92,7 +95,7 @@ for every frame).
 python make_depth.py INPUT.jpg --out PREFIX [--model MODEL]
 ```
 
-- `INPUT.jpg` — any photo (JPG/PNG).
+- `INPUT.jpg` — any photo (JPG/PNG/JXL).
 - `--out PREFIX` — output prefix; writes `PREFIX.npy` (float32 depth,
   0..1, **1 = closest**), `PREFIX.png` (8-bit preview, bright = close) and
   `PREFIX_16.png` (16-bit depth). Keep the `.npy` — it has no banding.
@@ -196,6 +199,12 @@ use `-crf 18`–`20` for a smaller file.
   resolution, so silhouettes are a few pixels soft. A faint fringe can
   remain at high-contrast edges; edge-aware (guided) depth upsampling
   would tighten it.
+- **JPEG XL.** `.jxl` input works in all three scripts, decoded via
+  ffmpeg (see `imload.py`). Everything is converted to 8-bit sRGB, so
+  16-bit JXL is scaled down and alpha is dropped; animated JXL uses the
+  first frame. Wide-gamut (Display P3) JXL is passed through without a
+  gamut remap, so colours may be slightly off — depth and bokeh are
+  unaffected.
 
 ## Files
 
@@ -204,6 +213,7 @@ use `-crf 18`–`20` for a smaller file.
 | `make_depth.py` | Depth map from a photo (Depth Anything V2). |
 | `render.py` | Layered DOF renderer (stills). Also usable as a module: `prepare_layers()` once, then `render_focus()` per focus. |
 | `sweep.py` | Focus-sweep frame renderer for video. |
+| `imload.py` | Image loading shared by the three scripts, including `.jxl` via ffmpeg. |
 | `requirements.txt` | Pinned dependencies (torch installed separately, see above). |
 
 ## References

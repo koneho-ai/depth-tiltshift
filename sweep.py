@@ -20,6 +20,7 @@ import cv2
 import numpy as np
 from PIL import Image, ImageEnhance
 
+from imload import load_bgr
 from render import prepare_layers, render_focus
 
 
@@ -49,7 +50,10 @@ def main():
     args = ap.parse_args()
 
     os.makedirs(args.out_dir, exist_ok=True)
-    img = cv2.imread(args.input)
+    try:
+        img = load_bgr(args.input)
+    except ValueError:
+        raise SystemExit(f"cannot read {args.input}")
     depth = np.load(args.depth).astype(np.float32)
     if depth.shape[:2] != img.shape[:2]:
         depth = cv2.resize(depth, (img.shape[1], img.shape[0]),

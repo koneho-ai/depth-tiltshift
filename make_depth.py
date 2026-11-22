@@ -19,15 +19,17 @@ import torch
 from PIL import Image
 from transformers import AutoImageProcessor, AutoModelForDepthEstimation
 
+from imload import load_pil
+
 
 def main() -> None:
     ap = argparse.ArgumentParser()
-    ap.add_argument("input", help="input image (jpg/png)")
+    ap.add_argument("input", help="input image (jpg/png/jxl)")
     ap.add_argument("--out", default="work/depth", help="output prefix (no extension)")
     ap.add_argument("--model", default="depth-anything/Depth-Anything-V2-Small-hf")
     args = ap.parse_args()
 
-    img = Image.open(args.input).convert("RGB")
+    img = load_pil(args.input)
     print(f"input {args.input} {img.size}")
 
     processor = AutoImageProcessor.from_pretrained(args.model)

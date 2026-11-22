@@ -40,6 +40,8 @@ import cv2
 import numpy as np
 from PIL import Image, ImageEnhance
 
+from imload import load_bgr
+
 
 # --- colour space -----------------------------------------------------------
 
@@ -259,8 +261,9 @@ def main():
     ap.add_argument("--contrast", type=float, default=1.05)
     args = ap.parse_args()
 
-    img = cv2.imread(args.input)
-    if img is None:
+    try:
+        img = load_bgr(args.input)
+    except ValueError:
         raise SystemExit(f"cannot read {args.input}")
     depth = np.load(args.depth).astype(np.float32)
     if depth.shape[:2] != img.shape[:2]:
