@@ -1,18 +1,19 @@
-"""Image loading for the depth-tiltshift tools, including JPEG XL.
+"""Image loading for the depth-tiltshift tools, including JPEG XL and HEIC.
 
-OpenCV and Pillow cannot read .jxl on their own (pillow-jxl has no wheel
-for this platform), but the system ffmpeg ships with the libjxl decoder,
-and ffmpeg is already a dependency of this project (video encoding). So
-.jxl files are decoded through ffmpeg into an in-memory PNG, then loaded
-normally. Everything else goes through the usual loaders.
+OpenCV and Pillow cannot read .jxl or .heic on their own (pillow-jxl has
+no wheel for this platform, pillow-heif is not installed), but the system
+ffmpeg ships with the libjxl decoder and a native HEVC decoder, and ffmpeg
+is already a dependency of this project (video encoding). So .jxl and
+.heic/.heif files are decoded through ffmpeg into an in-memory PNG, then
+loaded normally. Everything else goes through the usual loaders.
 
 Notes:
 - Output is always 8-bit sRGB: ffmpeg decodes to rgb24, so 10/12/16-bit
-  JXL is scaled down and alpha is dropped. That matches what the depth
-  model and the renderer consume.
-- Wide-gamut (Display P3) JXL is passed through without a gamut remap,
-  so colours may be slightly off; depth and bokeh are unaffected.
-- Animated JXL: only the first frame is used.
+  JXL/HEIC is scaled down and alpha is dropped. That matches what the
+  depth model and the renderer consume.
+- Wide-gamut (Display P3) JXL/HEIC is passed through without a gamut
+  remap, so colours may be slightly off; depth and bokeh are unaffected.
+- Animated JXL / multi-image HEIC: only the first frame is used.
 """
 import io
 import subprocess
@@ -22,8 +23,8 @@ import numpy as np
 from PIL import Image
 
 
-def _decode_jxl_bytes(path):
-    """Decode a .jxl file to PNG bytes via ffmpeg (libjxl decoder)."""
+def _decode_via_ffmpeg(path):
+    """Decode a .jxl/.heic file to PNG bytes via ffmpeg."""
     cmd = [
         "ffmpeg", "-v", "error", "-i", path,
         "-frames:v", "1", "-pix_fmt", "rgb24",
@@ -40,25 +41,25 @@ def _decode_jxl_bytes(path):
     return proc.stdout
 
 
-def _is_jxl(path):
-    return str(path).lower().endswith((".jxl", ".jxls"))
+def _needs_ffmpeg(path):
+    return str(path).lower().endswith((".jxl", ".jxls", ".heic", ".heif"))
 
 
 def load_pil(path):
-    """Load an image as a PIL RGB image. Supports .jxl via ffmpeg."""
-    if _is_jxl(path):
-        return Image.open(io.BytesIO(_decode_jxl_bytes(path))).convert("RGB")
+    """Load an image as a PIL RGB image. .jxl/.heic via ffmpeg."""
+    if _needs_ffmpeg(path):
+        return Image.open(io.BytesIO(_decode_via_ffmpeg(path))).convert("RGB")
     return Image.open(path).convert("RGB")
 
 
 def load_bgr(path):
     """Load an image as a uint8 BGR numpy array (OpenCV convention).
 
-    Supports .jxl via ffmpeg. Raises SystemExit-style ValueError when the
+    .jxl/.heic via ffmpeg. Raises SystemExit-style ValueError when the
     file cannot be read, matching cv2.imread's None contract.
     """
-    if _is_jxl(path):
-        data = np.frombuffer(_decode_jxl_bytes(path), dtype=np.uint8)
+    if _needs_ffmpeg(path):
+        data = np.frombuffer(_decode_via_ffmpeg(path), dtype=np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
     else:
         img = cv2.imread(str(path), cv2.IMREAD_COLOR)

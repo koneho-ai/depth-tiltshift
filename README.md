@@ -43,9 +43,9 @@ occlusion. With tilt set to zero you get pure depth-of-field blur.
 
 - Python 3.11+
 - `ffmpeg` on your `PATH` — needed for the focus-sweep video, and for
-  JPEG XL (`.jxl`) input, which is decoded through ffmpeg's libjxl
-  decoder (included in most ffmpeg builds since 6.0; check with
-  `ffmpeg -decoders | grep libjxl`)
+  JPEG XL (`.jxl`) and HEIC (`.heic`/`.heif`) input, decoded through
+  ffmpeg's libjxl decoder and native HEVC decoder (check with
+  `ffmpeg -decoders | grep -E 'libjxl|hevc'`)
 - About 2 GB RAM for a 1–3 MP image; CPU-only is fine
 
 ## Install
@@ -95,7 +95,7 @@ for every frame).
 python make_depth.py INPUT.jpg --out PREFIX [--model MODEL]
 ```
 
-- `INPUT.jpg` — any photo (JPG/PNG/JXL).
+- `INPUT.jpg` — any photo (JPG/PNG/JXL/HEIC).
 - `--out PREFIX` — output prefix; writes `PREFIX.npy` (float32 depth,
   0..1, **1 = closest**), `PREFIX.png` (8-bit preview, bright = close) and
   `PREFIX_16.png` (16-bit depth). Keep the `.npy` — it has no banding.
@@ -173,6 +173,33 @@ Replace `W:H` with your image size rounded to even numbers
 (`yuv420p` needs even dimensions). `-crf 16` is visually near-lossless;
 use `-crf 18`–`20` for a smaller file.
 
+### Batch processing — `process_album.py` + `build_sheets.py`
+
+To run a whole set of photos (a still + a sweep video per image):
+
+```bash
+# 1. Contact sheets, 8 photos per sheet, to pick each subject
+python build_sheets.py album.json   # writes work/sheets/sheet_N.jpg
+
+# 2. Record one focus point per photo in work/focus.json:
+#    {"DSC_9758": [0.78, 0.55], "DSC_9801": [0.4, 0.6], ...}
+
+# 3. Run the batch (resumable: skips outputs that already exist)
+python process_album.py --album-json album.json
+```
+
+`album.json` is `{"assets": [{"id", "filename", "type"}, ...]}` and each
+original is expected at `work/<stem>/<filename>` (one directory per photo,
+so renders stay with their source). Per image the batch makes a 3000px
+working copy + depth map, a still focused on the subject (hexagonal
+aperture 3), a 1920px focus sweep (180 frames at 24 fps, 7.5 s,
+hexagonal aperture 6, near→far from that image's depth percentiles), and
+optionally uploads both to a NAS share (`--no-upload` skips that step;
+`--only STEM` runs a single image; `--stills-only` skips the videos).
+
+Timings on CPU: roughly 1 minute for depth + still, ~10 minutes for the
+sweep video per image at 1920px.
+
 ## Tips
 
 - **Picking focus.** Run `make_depth.py` first and read its sampled
@@ -199,12 +226,15 @@ use `-crf 18`–`20` for a smaller file.
   resolution, so silhouettes are a few pixels soft. A faint fringe can
   remain at high-contrast edges; edge-aware (guided) depth upsampling
   would tighten it.
-- **JPEG XL.** `.jxl` input works in all three scripts, decoded via
-  ffmpeg (see `imload.py`). Everything is converted to 8-bit sRGB, so
-  16-bit JXL is scaled down and alpha is dropped; animated JXL uses the
-  first frame. Wide-gamut (Display P3) JXL is passed through without a
-  gamut remap, so colours may be slightly off — depth and bokeh are
-  unaffected.
+- **JPEG XL and HEIC.** `.jxl` and `.heic`/`.heif` input works in all
+  scripts, decoded via ffmpeg (see `imload.py`). Everything is converted
+  to 8-bit sRGB, so 16-bit JXL/HEIC is scaled down and alpha is dropped;
+  animated JXL and multi-image HEIC use the first frame. Tiled HEIC
+  grids (as produced by phones) are stitched by the decoder; scaling is
+  done with PIL afterwards, because ffmpeg's `-vf scale` conflicts with
+  the tile-grid filtergraph. Wide-gamut (Display P3) files are passed
+  through without a gamut remap, so colours may be slightly off — depth
+  and bokeh are unaffected.
 
 ## Files
 
@@ -213,7 +243,9 @@ use `-crf 18`–`20` for a smaller file.
 | `make_depth.py` | Depth map from a photo (Depth Anything V2). |
 | `render.py` | Layered DOF renderer (stills). Also usable as a module: `prepare_layers()` once, then `render_focus()` per focus. |
 | `sweep.py` | Focus-sweep frame renderer for video. |
-| `imload.py` | Image loading shared by the three scripts, including `.jxl` via ffmpeg. |
+| `imload.py` | Image loading shared by the scripts, including `.jxl` and `.heic` via ffmpeg. |
+| `process_album.py` | Batch driver: still + sweep video per image, resumable, optional NAS upload. |
+| `build_sheets.py` | Contact sheets (8 photos each) for picking focus points. |
 | `requirements.txt` | Pinned dependencies (torch installed separately, see above). |
 
 ## References
