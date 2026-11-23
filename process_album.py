@@ -8,8 +8,9 @@ Per image (in its work/<stem>/ dir):
   4. working copy, long edge 1920 + depth resized to match
   5. focus-sweep frames, 180 frames @ 24 fps (7.5 s), hex aperture 6,
      focus near->far from the depth percentiles of that image
-  6. H.264 encode, frames deleted after
-  7. still + video uploaded to the NAS (koneho/depth-tiltshift/<stem>/)
+  6. H.264 encode; sweep frames are KEPT (not deleted)
+  7. still + video + depth maps + sweep frames uploaded to the NAS
+     (koneho/depth-tiltshift/<stem>/, frames under <stem>/frames/)
 
 Every step skips work whose output already exists, so the batch is
 resumable: re-run it and it picks up where it stopped. A failed image is
@@ -28,6 +29,7 @@ sheets. The NAS upload needs the SMB helper scripts in --smb-dir and a
 reachable share; pass --no-upload to skip it.
 """
 import argparse
+import glob
 import json
 import os
 import shutil
@@ -132,11 +134,22 @@ def resize_depth(src_npy, dst_npy, img_path):
 def render_still(img, depth_npy, out, fx, fy):
     if os.path.exists(out) and os.path.getsize(out) > 0:
         return
-    run([VENV_PY, os.path.join(HERE, "render.py"), img, depth_npy,
-         "--out", out, "--focus-xy", str(fx), str(fy),
-         "--shape", "polygon", "--blades", "6",
-         "--aperture", "3", "--r-max", "60", "--edge-soft", "0.4"],
-        f"still {out}")
+    # 48 bands at 3000px needs ~5 GB of layers for a 4:3 image and can be
+    # OOM-killed with no error output (20261009_152602, 2026-11-23). A
+    # still does not sweep, so fewer bands cost little: retry at 24, then 12.
+    for bands in (48, 24, 12):
+        try:
+            run([VENV_PY, os.path.join(HERE, "render.py"), img, depth_npy,
+                 "--out", out, "--focus-xy", str(fx), str(fy),
+                 "--shape", "polygon", "--blades", "6",
+                 "--aperture", "3", "--r-max", "60", "--edge-soft", "0.4",
+                 "--bands", str(bands)],
+                f"still {out} ({bands} bands)")
+            return
+        except RuntimeError:
+            if bands == 12:
+                raise
+            log(f"still {out}: {bands} bands failed, retrying with fewer")
 
 
 def render_sweep(img, depth_npy, frames_dir, video_out):
@@ -160,18 +173,22 @@ def render_sweep(img, depth_npy, frames_dir, video_out):
          "-c:v", "libx264", "-preset", "slow", "-crf", "16",
          "-pix_fmt", "yuv420p", "-movflags", "+faststart", video_out],
         f"encode {video_out}")
-    shutil.rmtree(frames_dir, ignore_errors=True)
+    # Frames are kept (user request 2026-11-23): they are uploaded to the
+    # NAS by process() and allow re-encoding without re-rendering.
 
 
-def upload_to_nas(stem, files):
+def upload_to_nas(stem, files, subdir=None):
     existing = [f for f in files if os.path.exists(f)]
     if not existing:
         return
+    remote = f"depth-tiltshift/{stem}"
+    if subdir:
+        remote += f"/{subdir}"
     ensure_forwarder()
     run([os.path.join(SMB_DIR, ".venv", "bin", "python"),
          os.path.join(SMB_DIR, "smb_upload.py"),
-         "--share", "koneho", "--remote-dir", f"depth-tiltshift/{stem}"]
-        + existing, f"NAS upload {stem}")
+         "--share", "koneho", "--remote-dir", remote]
+        + existing, f"NAS upload {remote}")
 
 
 def process(asset, focus, args):
@@ -198,7 +215,15 @@ def process(asset, focus, args):
         resize_depth(depth3000 + ".npy", depth1920, img1920)
         render_sweep(img1920, depth1920, frames_dir, video)
     if not args.no_upload:
-        upload_to_nas(stem, [still, video] if not args.stills_only else [still])
+        depth_files = [depth3000 + ".npy", depth1920,
+                       depth3000 + ".png", depth3000 + "_16.png"]
+        if args.stills_only:
+            upload_to_nas(stem, [still] + depth_files)
+        else:
+            upload_to_nas(stem, [still, video] + depth_files)
+            frames = sorted(glob.glob(os.path.join(frames_dir,
+                                                   "frame_*.png")))
+            upload_to_nas(stem, frames, subdir="frames")
     log(f"{stem}: done in {time.time() - t0:.0f}s")
 
 

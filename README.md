@@ -202,8 +202,12 @@ so renders stay with their source). Per image the batch makes a 3000px
 working copy + depth map, a still focused on the subject (hexagonal
 aperture 3, saved as `.jxl`), a 1920px focus sweep (180 frames at 24 fps, 7.5 s,
 hexagonal aperture 6, near→far from that image's depth percentiles), and
-optionally uploads both to a NAS share (`--no-upload` skips that step;
+optionally uploads the still, the video, the depth maps (`.npy` + PNGs) and
+the sweep frames to a NAS share (`--no-upload` skips that step;
 `--only STEM` runs a single image; `--stills-only` skips the videos).
+Sweep frames are kept locally and uploaded under `<stem>/frames/`. A still
+that fails at 48 bands is retried at 24, then 12 bands — a 4:3 image at
+3000px needs ~5 GB of band layers, which can be OOM-killed.
 
 Timings on CPU: roughly 1 minute for depth + still, ~10 minutes for the
 sweep video per image at 1920px.
