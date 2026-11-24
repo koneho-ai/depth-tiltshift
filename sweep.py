@@ -21,7 +21,7 @@ import numpy as np
 from PIL import Image, ImageEnhance
 
 from imload import load_bgr
-from render import prepare_layers, render_focus
+from render import prepare_layers, render_focus, render_focus_hybrid
 
 
 def smoothstep(t):
@@ -45,6 +45,22 @@ def main():
     ap.add_argument("--edge-soft", type=float, default=0.4,
                     help="apodization: fraction of the disc radius over "
                     "which the kernel edge falls off (0 = flat pillbox)")
+    ap.add_argument("--hybrid", dest="hybrid", action="store_true",
+                    default=True,
+                    help="hybrid DOF (default): per-pixel "
+                    "scatter-as-gather near focus + layered pipeline "
+                    "for the far field (removes the per-band striping)")
+    ap.add_argument("--no-hybrid", dest="hybrid", action="store_false",
+                    help="use the pure layered pipeline (faster, but "
+                    "stripes smooth surfaces near the focus plane)")
+    ap.add_argument("--zone-r", type=float, default=16.0,
+                    help="hybrid: gather used fully below this CoC radius "
+                    "(px), layered above zone-r + fade-r")
+    ap.add_argument("--fade-r", type=float, default=20.0,
+                    help="hybrid: cross-fade width in CoC radius (px)")
+    ap.add_argument("--taps", type=int, default=49,
+                    help="hybrid: gather tap count (25 is sparse; 49 "
+                    "matches the wide zone)")
     ap.add_argument("--saturation", type=float, default=1.2)
     ap.add_argument("--contrast", type=float, default=1.05)
     args = ap.parse_args()
@@ -73,8 +89,18 @@ def main():
         t = i / max(args.frames - 1, 1)
         focus = args.focus_near + (args.focus_far - args.focus_near) * smoothstep(t)
         ft0 = time.time()
-        frame = render_focus(lin, layers, focus, args.aperture, args.r_max,
-                             args.shape, 0.0, args.blades, args.edge_soft)
+        if args.hybrid:
+            frame = render_focus_hybrid(lin, drel, layers, focus,
+                                        args.aperture, args.r_max,
+                                        args.shape, 0.0, args.blades,
+                                        args.edge_soft,
+                                        zone_r=args.zone_r,
+                                        fade_r=args.fade_r,
+                                        n_taps=args.taps)
+        else:
+            frame = render_focus(lin, layers, focus, args.aperture,
+                                 args.r_max, args.shape, 0.0, args.blades,
+                                 args.edge_soft)
         pil = Image.fromarray(cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
         pil = ImageEnhance.Color(pil).enhance(args.saturation)
         pil = ImageEnhance.Contrast(pil).enhance(args.contrast)

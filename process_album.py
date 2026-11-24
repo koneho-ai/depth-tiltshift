@@ -12,6 +12,12 @@ Per image (in its work/<stem>/ dir):
   7. still + video + depth maps + sweep frames uploaded to the NAS
      (koneho/depth-tiltshift/<stem>/, frames under <stem>/frames/)
 
+Stills and sweeps use the hybrid renderer by default (render.py /
+sweep.py --hybrid; per-pixel gather near focus + layered far field),
+which removes the per-band striping on smooth surfaces near the focus
+plane. Pass --no-hybrid to render.py / sweep.py directly for the pure
+layered pipeline.
+
 Every step skips work whose output already exists, so the batch is
 resumable: re-run it and it picks up where it stopped. A failed image is
 logged and skipped, not fatal to the batch.

@@ -40,6 +40,23 @@ Wadhwa et al. 2018):
 5. **Composite far to near** with the premultiplied over operator. The
    in-focus band is composited from the full-resolution sharp image.
 
+Blending two adjacent bands' disk blurs is not a disk blur of the
+in-between radius, so the layered pipeline stripes smooth surfaces
+(sand, water) near the focus plane, where neighbouring band radii differ
+most in relative terms. The default renderer is therefore a **hybrid**:
+near focus (blur radius under 16 px, fading out by 36 px) each pixel is
+rendered by a per-pixel scatter-as-gather — a source point contributes
+to a destination only if its own blur disc covers it (Hammon's rule),
+with an apodized disc profile and a sunflower tap pattern — so the blur
+radius is a continuous function of depth and the stripes vanish. The
+far field keeps the layered pipeline (cheaper at large radii, and it
+handles occlusion at depth edges, where the gather under-spills
+foreground colour). A guided-filter tonal correction keeps the gather
+zone's brightness matched to the layered render, and a depth-jump edge
+mask hands silhouettes back to the layered pipeline so outlines stay
+soft and no colour glows onto the background. `--no-hybrid` selects the
+pure layered pipeline (faster, but stripes near focus).
+
 Tilt is supported too: bands and blur are computed in plane-relative depth,
 so a tilted focus plane (the classic miniature look) stays consistent with
 occlusion. With tilt set to zero you get pure depth-of-field blur.
@@ -92,8 +109,9 @@ ffmpeg -y -framerate 24 -i frames/frame_%03d.png \
 ```
 
 Timings on CPU (no GPU): depth ~20 s for a 1 MP image, a still render
-~4–9 s, a 60-frame sweep a few minutes (layers are prepared once and reused
-for every frame).
+~15–40 s, a 60-frame sweep ~10 minutes (layers are prepared once and reused
+for every frame; the hybrid gather costs ~8–10 s per frame at 1920px,
+`--no-hybrid` is ~3x faster).
 
 ## Usage
 
@@ -137,6 +155,11 @@ roughly half the size of the JPEG at the same quality).
 | `--blades N` | `6` | Polygon sides when `--shape polygon` (6 = hexagon). |
 | `--rim R` | `0.0` | Bright-rim strength 0..1 (soap-bubble bokeh). |
 | `--edge-soft S` | `0.4` | Apodization: fraction of the disc radius over which the kernel edge falls off. `0` is a flat pillbox (geometric bokeh discs, hard rim); `0.4` is the soft creamy edge of an under-corrected lens. A flat disc makes a blurred foreground object's silhouette read as a visible outline against sharp background. |
+| `--hybrid` / `--no-hybrid` | on | Hybrid DOF (default): per-pixel scatter-as-gather near focus + layered pipeline for the far field; removes the per-band striping on smooth surfaces near the focus plane. `--no-hybrid` uses the pure layered pipeline (faster, stripes near focus). |
+| `--zone-r R` | `16.0` | Hybrid: gather used fully below this blur radius (px), layered above `zone-r + fade-r`. |
+| `--fade-r R` | `20.0` | Hybrid: cross-fade width in blur radius (px). |
+| `--taps N` | `49` | Hybrid: gather tap count (25 is sparse; 49 matches the wide zone). |
+| `--varmatch` | off | Experimental, largely ineffective: variance-matched band weights cut the near-focus striping only ~17%. Kept for reference. |
 | `--saturation S` | `1.2` | Colour saturation lift for the miniature look. |
 | `--contrast C` | `1.05` | Contrast lift. |
 
@@ -169,6 +192,7 @@ python sweep.py INPUT.jpg DEPTH.npy --out-dir FRAMES [options]
 | `--focus-near D` | `0.70` | Focus depth of the first frame (near). |
 | `--focus-far D` | `0.03` | Focus depth of the last frame (far). |
 | `--aperture`, `--bands`, `--r-max`, `--shape`, `--blades`, `--edge-soft`, `--saturation`, `--contrast` | as `render.py` | Same meaning. |
+| `--hybrid` / `--no-hybrid`, `--zone-r`, `--fade-r`, `--taps` | as `render.py` | Hybrid DOF is on by default; see `render.py`. |
 
 Focus follows a smoothstep ease, so the pull lingers at each end. Frames
 are written as `FRAMES/frame_000.png` … and existing frames are skipped,
@@ -217,8 +241,9 @@ skips starting the forwarder). A still
 that fails at 48 bands is retried at 24, then 12 bands — a 4:3 image at
 3000px needs ~5 GB of band layers, which can be OOM-killed.
 
-Timings on CPU: roughly 1 minute for depth + still, ~10 minutes for the
-sweep video per image at 1920px.
+Timings on CPU: roughly 2–3 minutes for depth + still, ~15–25 minutes
+for the sweep video per image at 1920px (hybrid frames cost ~8–10 s each;
+`--no-hybrid` is ~3x faster but stripes smooth surfaces near focus).
 
 ## Tips
 
