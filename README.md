@@ -48,9 +48,12 @@ occlusion. With tilt set to zero you get pure depth-of-field blur.
 
 - Python 3.11+
 - `ffmpeg` on your `PATH` — needed for the focus-sweep video, and for
-  JPEG XL (`.jxl`) and HEIC (`.heic`/`.heif`) input, decoded through
-  ffmpeg's libjxl decoder and native HEVC decoder (check with
-  `ffmpeg -decoders | grep -E 'libjxl|hevc'`)
+  JPEG XL (`.jxl`) input, decoded through ffmpeg's libjxl decoder
+  (check with `ffmpeg -decoders | grep libjxl`)
+- `pillow-heif` (in `requirements.txt`) — HEIC (`.heic`/`.heif`) input
+  goes through libheif, not ffmpeg: these files are tiled grids, and
+  ffmpeg's grid stitching is version-dependent (ffmpeg 7.1 silently
+  decodes only the first 512×512 tile)
 - About 2 GB RAM for a 1–3 MP image; CPU-only is fine
 
 ## Install
@@ -244,12 +247,13 @@ sweep video per image at 1920px.
   remain at high-contrast edges; edge-aware (guided) depth upsampling
   would tighten it.
 - **JPEG XL and HEIC.** `.jxl` and `.heic`/`.heif` input works in all
-  scripts, decoded via ffmpeg (see `imload.py`). Everything is converted
-  to 8-bit sRGB, so 16-bit JXL/HEIC is scaled down and alpha is dropped;
-  animated JXL and multi-image HEIC use the first frame. Tiled HEIC
-  grids (as produced by phones) are stitched by the decoder; scaling is
-  done with PIL afterwards, because ffmpeg's `-vf scale` conflicts with
-  the tile-grid filtergraph. Wide-gamut (Display P3) files are passed
+  scripts (see `imload.py`): JXL is decoded via ffmpeg's libjxl, HEIC
+  via pillow-heif (libheif). Everything is converted to 8-bit sRGB, so
+  16-bit JXL/HEIC is scaled down and alpha is dropped; animated JXL and
+  multi-image HEIC use the first frame. Tiled HEIC grids (as produced
+  by phones) are stitched by libheif; do NOT decode them with ffmpeg —
+  ffmpeg < 8 silently returns a single 512×512 tile. Scaling is done
+  with PIL after decoding. Wide-gamut (Display P3) files are passed
   through without a gamut remap, so colours may be slightly off — depth
   and bokeh are unaffected.
 
@@ -260,7 +264,7 @@ sweep video per image at 1920px.
 | `make_depth.py` | Depth map from a photo (Depth Anything V2). |
 | `render.py` | Layered DOF renderer (stills). Also usable as a module: `prepare_layers()` once, then `render_focus()` per focus. |
 | `sweep.py` | Focus-sweep frame renderer for video. |
-| `imload.py` | Image loading shared by the scripts, including `.jxl` and `.heic` via ffmpeg. |
+| `imload.py` | Image loading shared by the scripts: `.jxl` via ffmpeg, `.heic` via pillow-heif. |
 | `process_album.py` | Batch driver: still + sweep video per image, resumable, optional NAS upload. |
 | `build_sheets.py` | Contact sheets (8 photos each) for picking focus points. |
 | `requirements.txt` | Pinned dependencies (torch installed separately, see above). |

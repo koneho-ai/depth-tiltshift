@@ -1,16 +1,20 @@
 """Image loading for the depth-tiltshift tools, including JPEG XL and HEIC.
 
-OpenCV and Pillow cannot read .jxl or .heic on their own (pillow-jxl has
-no wheel for this platform, pillow-heif is not installed), but the system
-ffmpeg ships with the libjxl decoder and a native HEVC decoder, and ffmpeg
-is already a dependency of this project (video encoding). So .jxl and
-.heic/.heif files are decoded through ffmpeg into an in-memory PNG, then
-loaded normally. Everything else goes through the usual loaders.
+OpenCV and Pillow cannot read .jxl or .heic on their own. .jxl goes
+through ffmpeg's libjxl decoder into an in-memory PNG (ffmpeg is already
+a dependency of this project for video encoding). .heic/.heif goes
+through pillow-heif (libheif) — NOT ffmpeg: these files are tiled HEIF
+grids (4000x3000 of 512x512 tiles), and ffmpeg's grid stitching is
+version-dependent — ffmpeg 7.1.4 silently decodes only the first tile
+(512x512), which produced cropped 512x512 stills and sweeps for two
+images on 2026-11-24, while ffmpeg 8.1.2 stitches correctly. libheif
+stitches the grid on every version, so HEIC requires pillow-heif
+(`pip install pillow-heif`) and fails loudly if it is missing.
 
 Notes:
-- Output is always 8-bit sRGB: ffmpeg decodes to rgb24, so 10/12/16-bit
-  JXL/HEIC is scaled down and alpha is dropped. That matches what the
-  depth model and the renderer consume.
+- Output is always 8-bit sRGB: 10/12/16-bit JXL/HEIC is scaled down and
+  alpha is dropped. That matches what the depth model and the renderer
+  consume.
 - Wide-gamut (Display P3) JXL/HEIC is passed through without a gamut
   remap, so colours may be slightly off; depth and bokeh are unaffected.
 - Animated JXL / multi-image HEIC: only the first frame is used.
@@ -42,11 +46,34 @@ def _decode_via_ffmpeg(path):
 
 
 def _needs_ffmpeg(path):
-    return str(path).lower().endswith((".jxl", ".jxls", ".heic", ".heif"))
+    return str(path).lower().endswith((".jxl", ".jxls"))
+
+
+def _is_heic(path):
+    return str(path).lower().endswith((".heic", ".heif"))
+
+
+def _load_heic_pil(path):
+    """Load a HEIC/HEIF via pillow-heif (libheif stitches tiled grids).
+
+    Raises a clear error if pillow-heif is missing — falling back to
+    ffmpeg would silently produce a single-tile crop on ffmpeg < 8.
+    """
+    try:
+        from pillow_heif import register_heif_opener
+    except ImportError:
+        raise RuntimeError(
+            f"HEIC file {path} needs pillow-heif "
+            "(pip install pillow-heif); ffmpeg's HEIF grid support is "
+            "version-dependent and old versions decode only one tile")
+    register_heif_opener()
+    return Image.open(path).convert("RGB")
 
 
 def load_pil(path):
-    """Load an image as a PIL RGB image. .jxl/.heic via ffmpeg."""
+    """Load an image as a PIL RGB image. .jxl via ffmpeg, .heic via libheif."""
+    if _is_heic(path):
+        return _load_heic_pil(path)
     if _needs_ffmpeg(path):
         return Image.open(io.BytesIO(_decode_via_ffmpeg(path))).convert("RGB")
     return Image.open(path).convert("RGB")
@@ -55,10 +82,14 @@ def load_pil(path):
 def load_bgr(path):
     """Load an image as a uint8 BGR numpy array (OpenCV convention).
 
-    .jxl/.heic via ffmpeg. Raises SystemExit-style ValueError when the
-    file cannot be read, matching cv2.imread's None contract.
+    .jxl via ffmpeg, .heic via libheif. Raises SystemExit-style
+    ValueError when the file cannot be read, matching cv2.imread's None
+    contract.
     """
-    if _needs_ffmpeg(path):
+    if _is_heic(path):
+        img = cv2.cvtColor(np.array(_load_heic_pil(path)),
+                           cv2.COLOR_RGB2BGR)
+    elif _needs_ffmpeg(path):
         data = np.frombuffer(_decode_via_ffmpeg(path), dtype=np.uint8)
         img = cv2.imdecode(data, cv2.IMREAD_COLOR)
     else:
