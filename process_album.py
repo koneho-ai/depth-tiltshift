@@ -46,6 +46,8 @@ VENV_PY = os.path.join(HERE, ".venv", "bin", "python")
 ALBUM_JSON = os.path.expanduser("~/workspace/immich-api/tilt-shift-album.json")
 FOCUS_JSON = os.path.join(HERE, "work", "focus.json")
 SMB_DIR = os.path.expanduser("~/workspace/synology-smb")
+SMB_HOST = "127.0.0.1"
+SMB_PORT = 14445
 LOG = os.path.join(WORK, "batch.log")
 
 SWEEP_FRAMES = 180
@@ -67,7 +69,14 @@ def run(cmd, what):
 
 
 def ensure_forwarder():
-    """Start the SMB forwarder if port 14445 is not listening."""
+    """Start the SMB forwarder if port 14445 is not listening.
+
+    Only needed when the NAS is reached via the localhost forwarder
+    (the Hatch VM). On a host with direct tailnet access to the NAS
+    (--smb-host set to the NAS hostname), there is nothing to do.
+    """
+    if SMB_HOST != "127.0.0.1":
+        return
     import socket
     s = socket.socket()
     try:
@@ -187,7 +196,8 @@ def upload_to_nas(stem, files, subdir=None):
     ensure_forwarder()
     run([os.path.join(SMB_DIR, ".venv", "bin", "python"),
          os.path.join(SMB_DIR, "smb_upload.py"),
-         "--share", "koneho", "--remote-dir", remote]
+         "--share", "koneho", "--remote-dir", remote,
+         "--host", SMB_HOST, "--port", str(SMB_PORT)]
         + existing, f"NAS upload {remote}")
 
 
@@ -228,7 +238,7 @@ def process(asset, focus, args):
 
 
 def main():
-    global ALBUM_JSON, FOCUS_JSON, WORK, SMB_DIR, LOG
+    global ALBUM_JSON, FOCUS_JSON, WORK, SMB_DIR, SMB_HOST, SMB_PORT, LOG
     ap = argparse.ArgumentParser()
     ap.add_argument("--only", help="process only this stem")
     ap.add_argument("--no-upload", action="store_true")
@@ -237,12 +247,18 @@ def main():
     ap.add_argument("--focus-json", default=FOCUS_JSON)
     ap.add_argument("--work-dir", default=WORK)
     ap.add_argument("--smb-dir", default=SMB_DIR)
+    ap.add_argument("--smb-host", default=SMB_HOST,
+                    help="SMB server (default: localhost forwarder)")
+    ap.add_argument("--smb-port", type=int, default=SMB_PORT,
+                    help="SMB port (default: 14445 forwarder; 445 direct)")
     args = ap.parse_args()
 
     ALBUM_JSON = os.path.expanduser(args.album_json)
     FOCUS_JSON = os.path.expanduser(args.focus_json)
     WORK = os.path.expanduser(args.work_dir)
     SMB_DIR = os.path.expanduser(args.smb_dir)
+    SMB_HOST = args.smb_host
+    SMB_PORT = args.smb_port
     LOG = os.path.join(WORK, "batch.log")
 
     with open(ALBUM_JSON) as f:

@@ -205,7 +205,12 @@ hexagonal aperture 6, near→far from that image's depth percentiles), and
 optionally uploads the still, the video, the depth maps (`.npy` + PNGs) and
 the sweep frames to a NAS share (`--no-upload` skips that step;
 `--only STEM` runs a single image; `--stills-only` skips the videos).
-Sweep frames are kept locally and uploaded under `<stem>/frames/`. A still
+Sweep frames are kept locally and uploaded under `<stem>/frames/`. The
+upload goes through the SMB helper scripts in `--smb-dir` (default
+`~/workspace/synology-smb`); by default they talk to a forwarder on
+localhost:14445, and on a host that can reach the NAS directly you can
+point them at it with `--smb-host <nas-host> --smb-port 445` (which also
+skips starting the forwarder). A still
 that fails at 48 bands is retried at 24, then 12 bands — a 4:3 image at
 3000px needs ~5 GB of band layers, which can be OOM-killed.
 
