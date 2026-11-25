@@ -580,12 +580,20 @@ def render_focus_hybrid(lin, drel, layers, focus, aperture=3.0, r_max=30.0,
     r_edge = cv2.dilate(r_edge, np.ones((15, 15), np.float32))
     # DIST_LABEL_PIXEL labels are 1-based ordinals of the zero pixels
     # in row-major scan order (verified 2026-11-24), NOT linear
-    # indices -- map through the edge-pixel list.
+    # indices -- map through the edge-pixel list. Some images have NO
+    # depth edges at all (smooth depth field, no foreground occluder):
+    # then eys is empty, r_at_edge is empty, and the clip below yields
+    # -1, which crashes on the empty array (IndexError, hit on 8 redo
+    # images). With no edges there is nothing to hand back to the
+    # layered pipeline, so the edge mask is just zero.
     eys, exs = np.where(edge == 1)
-    r_at_edge = r_edge[eys, exs]
-    r_nearest = r_at_edge[np.clip(labels.reshape(-1), 1, len(eys)) - 1
-                          ].reshape(h, w)
-    edge_mask = np.clip((r_nearest + 6.0 - dist) / 12.0, 0, 1)
+    if len(eys) == 0:
+        edge_mask = np.zeros_like(drel, dtype=np.float32)
+    else:
+        r_at_edge = r_edge[eys, exs]
+        r_nearest = r_at_edge[np.clip(labels.reshape(-1), 1, len(eys)) - 1
+                              ].reshape(h, w)
+        edge_mask = np.clip((r_nearest + 6.0 - dist) / 12.0, 0, 1)
     gather_w = fade * (1.0 - edge_mask)
     out_lin = (gather * gather_w[..., None]
                + layered_lin * (1 - gather_w[..., None]))
